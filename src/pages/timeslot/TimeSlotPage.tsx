@@ -2,13 +2,24 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { bookAppointment } from '../../services/api/appointmentService';
 
+interface OpenSlot {
+  openSlotId: number;
+  apptStartDateTime: string;
+  apptEndDateTime: string;
+  displayTime: string;
+  slotDuration: string;
+}
+const SESSION_ID = '65c03d61-461e-4ad7-bc73-9e5ec43ccc28';
 const TimeSlotPage = () => {
   const navigate = useNavigate()
   const location = useLocation()
-  const { dateRange } = location.state || { dateRange: { startDate: null, endDate: null } }
+  const { dateRange, availableSlots } = location.state || { 
+    dateRange: { startDate: null, endDate: null },
+    availableSlots: []
+  }
   
   const [selectedDate, setSelectedDate] = useState<string | null>(dateRange?.startDate || null)
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(null)
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<number | null>(null)
   const [selectedTimeOfDay, setSelectedTimeOfDay] = useState<string>('Morning')
   
   // Generate array of dates in the range
@@ -43,93 +54,86 @@ const TimeSlotPage = () => {
   }
 
   // Generate time slots based on time of day
+  // Replace the generateTimeSlots function
   const generateTimeSlots = () => {
-    const slots = []
+    if (!availableSlots || !Array.isArray(availableSlots)) return [];
     
-    if (selectedTimeOfDay === 'Morning') {
-      for (let hour = 7; hour <= 11; hour++) {
-        slots.push(`${hour}:00 AM`)
-        slots.push(`${hour}:15 AM`)
-        slots.push(`${hour}:30 AM`)
-        slots.push(`${hour}:45 AM`)
-      }
-    } else if (selectedTimeOfDay === 'Afternoon') {
-      for (let hour = 12; hour <= 16; hour++) {
-        const displayHour = hour > 12 ? hour - 12 : hour
-        const period = 'PM'
-        slots.push(`${displayHour}:00 ${period}`)
-        slots.push(`${displayHour}:15 ${period}`)
-        slots.push(`${displayHour}:30 ${period}`)
-        slots.push(`${displayHour}:45 ${period}`)
-      }
-    } else if (selectedTimeOfDay === 'Evening') {
-      for (let hour = 17; hour <= 20; hour++) {
-        const displayHour = hour - 12
-        slots.push(`${displayHour}:00 PM`)
-        slots.push(`${displayHour}:15 PM`)
-        slots.push(`${displayHour}:30 PM`)
-        slots.push(`${displayHour}:45 PM`)
-      }
-    }
-    
-    return slots
+    return availableSlots.filter((slot: OpenSlot) => {
+      const slotDate = new Date(slot.apptStartDateTime).toISOString().split('T')[0]
+      if (slotDate !== selectedDate) return false;
+      
+      const hour = new Date(slot.apptStartDateTime).getHours()
+      if (selectedTimeOfDay === 'Morning') return hour >= 7 && hour < 12
+      if (selectedTimeOfDay === 'Afternoon') return hour >= 12 && hour < 17
+      if (selectedTimeOfDay === 'Evening') return hour >= 17 && hour <= 20
+      return false
+    })
   }
 
   const handleDateChange = (date: string) => {
     setSelectedDate(date)
   }
 
-  const handleTimeSlotClick = (timeSlot: string) => {
-    setSelectedTimeSlot(timeSlot)
+  const handleTimeSlotClick = (slot: OpenSlot) => {
+    setSelectedTimeSlot(slot.openSlotId)
   }
+
   const handleFinishBooking = async () => {
     if (!selectedDate || !selectedTimeSlot) return;
+    
+    // Get data from localStorage
     const formData = JSON.parse(localStorage.getItem('appointmentFormData') || '{}');
-  const appointmentData = JSON.parse(localStorage.getItem('appointmentSelections') || '{}');
-  const dateData = JSON.parse(localStorage.getItem('appointmentDate') || '{}');
-  
-    // Example: extract fields for the API payload
-   const payload = {
-    ApptDate: selectedDate,
-    EmailId: formData.email || '',
-    FirstName: formData.firstName || '',
-    LastName: formData.lastName || '',
-    MobileNumber: formData.phoneNumber || '',
-    OpenSlotId: selectedTimeSlot,
-    PatientDob: formData.dob || '',
-    ReasonId: appointmentData.reason || '',
-    SessionID: formData.sessionId || '',
-    isNewPatient: formData.isNewPatient || false,
-    locationId: appointmentData.location || '',
-    resourceId: appointmentData.provider || ''
-  };
+    const appointmentData = JSON.parse(localStorage.getItem('appointmentSelections') || '{}');
+    const dateData = JSON.parse(localStorage.getItem('appointmentDate') || '{}');
+    
+    // Construct the payload with all required fields
+    const payload = {
+      OpenSlotId: String(selectedTimeSlot), // Convert to string to match API format
+      ApptDate: selectedDate,
+      ReasonId: appointmentData.reason || '',
+      FirstName: formData.firstName || '',
+      LastName: formData.lastName || '',
+      PatientDob: formData.dob || '',
+      MobileNumber: formData.phoneNumber || '',
+      EmailId: formData.email || '',
+      SessionID: formData.sessionId || '',
+      resourceId: appointmentData.provider || '',
+      locationId: appointmentData.location || '',
+      isNewPatient: String(formData.isNewPatient || false) // Convert to string to match API format
+    };
 
-  
-    const result = await bookAppointment({
-      open_slot_id: selectedTimeSlot,
-      from_date: selectedDate,
-      reason_id: appointmentData.reason || '',
-      first_name: formData.firstName || '',
-      last_name: formData.lastName || '',
-      email_id: formData.email || '',
-      phone_number: formData.mobileNumber || '',
-      dob: formData.dob || '',
-      session_id: formData.sessionId || '',
-      isNewPatient: formData.isNewPatient || false,
-      selected_location_name: appointmentData.location || '',
-      selected_provider_pame: appointmentData.provider || '',
-      resourceId: '',
-      location_selected: '',
-      path: ''
-    });
-   
-    // Handle result (success/failure)
-    if (result && result.response === 'Appointment scheduled successfully.') {
-      // Navigate to confirmation or show success
-      navigate('/');
-    } else {
-      // Show error message
-      alert(result.usermessage || 'Booking failed.');
+    try {
+      const result = await bookAppointment({
+        open_slot_id: String(selectedTimeSlot),
+        from_date: selectedDate,
+        reason_id: appointmentData.reason || '',
+        first_name: formData.firstName || '',
+        last_name: formData.lastName || '',
+        email_id: formData.email || '',
+        phone_number: formData.phoneNumber || '',
+        dob: formData.dob || '',
+        session_id: formData.sessionId || SESSION_ID,
+        isNewPatient: formData.isNewPatient || false,
+        selected_location_name: appointmentData.location || '',
+        selected_provider_pame: appointmentData.provider || '',
+        resourceId: appointmentData.provider || '',
+        location_selected: appointmentData.location || '',
+        path: location.state?.path || ''
+      });
+
+      if (result && result.response === 'Appointment scheduled successfully.') {
+        // Clear localStorage after successful booking
+        localStorage.removeItem('appointmentFormData');
+        localStorage.removeItem('appointmentSelections');
+        localStorage.removeItem('appointmentDate');
+        
+        navigate('/');
+      } else {
+        alert(result.usermessage || 'Booking failed.');
+      }
+    } catch (error) {
+      console.error('Error booking appointment:', error);
+      alert('Failed to book appointment. Please try again.');
     }
   };
 
@@ -193,14 +197,15 @@ const TimeSlotPage = () => {
 
           {/* Time Slots Grid */}
           <div className="grid grid-cols-2 gap-2 mb-6">
-            {generateTimeSlots().map((timeSlot, index) => (
+            {generateTimeSlots().map((slot: OpenSlot) => (
               <button
-                key={index}
+                key={slot.openSlotId}
                 type="button"
-                className={`p-3 rounded-md text-center ${selectedTimeSlot === timeSlot ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800 hover:bg-blue-200'}`}
-                onClick={() => handleTimeSlotClick(timeSlot)}
+                className={`p-3 rounded-md text-center ${selectedTimeSlot === slot.openSlotId ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-800 hover:bg-blue-200'}`}
+                onClick={() => handleTimeSlotClick(slot)}
               >
-                {timeSlot}
+                {slot.displayTime}
+                <div className="text-xs">{slot.slotDuration}</div>
               </button>
             ))}
           </div>
