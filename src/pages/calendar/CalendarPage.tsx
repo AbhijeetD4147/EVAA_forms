@@ -1,15 +1,31 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { getOpenSlots } from '../../services/api/appointmentService';
 
 const CalendarPage = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth())
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
-  const [dateRange, setDateRange] = useState<{startDate: string | null, endDate: string | null}>({
+  const [dateRange, setDateRange] = useState<{ startDate: string | null, endDate: string | null }>({
     startDate: null,
     endDate: null
   })
+  const [availableDates, setAvailableDates] = useState<string[]>([])
+
+  useEffect(() => {
+    // Get available dates from location state
+    const state = location.state
+    if (state?.availableDates) {
+      // Map array of objects to array of date strings if needed
+      if (Array.isArray(state.availableDates) && typeof state.availableDates[0] === 'object' && state.availableDates[0].AVAILABLE_DATES) {
+        setAvailableDates(state.availableDates.map((d: any) => d.AVAILABLE_DATES))
+      } else {
+        setAvailableDates(state.availableDates)
+      }
+    }
+  }, [])
 
   // Generate days for the current month
   const getDaysInMonth = (year: number, month: number) => {
@@ -38,11 +54,17 @@ const CalendarPage = () => {
     return days
   }
 
-  const handleDateClick = (day: number) => {
-    if (!day) return
-    
+  const isDateAvailable = (day: number) => {
+    if (!day) return false
     const dateString = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    
+    return availableDates.includes(dateString)
+  }
+
+  const handleDateClick = (day: number) => {
+    if (!day || !isDateAvailable(day)) return
+
+    const dateString = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
     if (!dateRange.startDate || (dateRange.startDate && dateRange.endDate)) {
       // Start a new range
       setDateRange({
@@ -54,17 +76,17 @@ const CalendarPage = () => {
       // Ensure endDate is after startDate
       const startDate = new Date(dateRange.startDate)
       const clickedDate = new Date(dateString)
-      
-      // Calculate the difference in days
-      const diffTime = Math.abs(clickedDate.getTime() - startDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
-      if (diffDays >= 7) { // 7 days including the start date
-        alert('Date range cannot exceed 7 days. Please select a shorter range.');
+      // Calculate the difference in days
+      const diffTime = Math.abs(clickedDate.getTime() - startDate.getTime())
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+      if (diffDays >= 7) {
+        alert('Date range cannot exceed 7 days. Please select a shorter range.')
         setDateRange({
           startDate: dateString,
           endDate: null
-        });
+        })
       } else if (clickedDate < startDate) {
         setDateRange({
           startDate: dateString,
@@ -81,14 +103,14 @@ const CalendarPage = () => {
 
   const isDateInRange = (day: number) => {
     if (!day || !dateRange.startDate) return false
-    
+
     const currentDate = new Date(selectedYear, selectedMonth, day)
     const startDate = new Date(dateRange.startDate)
-    
+
     if (!dateRange.endDate) {
       return currentDate.toDateString() === startDate.toDateString()
     }
-    
+
     const endDate = new Date(dateRange.endDate)
     return currentDate >= startDate && currentDate <= endDate
   }
@@ -136,12 +158,44 @@ const CalendarPage = () => {
     'July', 'August', 'September', 'October', 'November', 'December'
   ]
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    console.log('Date range submitted:', dateRange)
-    // Navigate to the time slot page with the selected date range
-    navigate('/timeslot', { state: { dateRange: dateRange } })
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!dateRange.startDate) return;
+
+    try {
+      // Get the required parameters from location state or props
+      const state = location.state;
+      const apiData = {
+        from_date: dateRange.startDate,
+        to_date: dateRange.startDate, // Using same date as from_date
+        location_id: state?.location_id || '',
+        provider_id: state?.provider_id || '',
+        reason_id: state?.reason_id || '',
+        path: state?.path || '',
+        session_id: state?.session_id || ''
+      };
+
+      // Call the API
+      const response = await getOpenSlots(apiData);
+      localStorage.setItem('appointmentDate', JSON.stringify(dateRange));
+      // Navigate to timeslot page with the retrieved slots
+      navigate('/timeslot', {
+        state: {
+          ...location.state,
+          dateRange: dateRange,
+          formData: location.state?.formData, // ensure formData is passed
+          appointmentData: location.state?.appointmentData, // ensure appointmentData is passed
+          // add selected date range
+          selectedDate,
+          availableSlots: 'response' in response ? response.response : null
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching open slots:', error);
+      // Handle error appropriately
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
@@ -161,11 +215,11 @@ const CalendarPage = () => {
           <div className="bg-blue-600 text-white p-3 rounded-t-md">
             <div className="text-center font-bold">{selectedYear}</div>
           </div>
-          
+
           {/* Month Navigation */}
           <div className="flex justify-between items-center p-3 bg-gray-100">
-            <button 
-              type="button" 
+            <button
+              type="button"
               onClick={handlePrevMonth}
               className="text-gray-600 hover:text-gray-900"
             >
@@ -174,8 +228,8 @@ const CalendarPage = () => {
               </svg>
             </button>
             <div className="font-semibold">{monthNames[selectedMonth]} {selectedYear}</div>
-            <button 
-              type="button" 
+            <button
+              type="button"
               onClick={handleNextMonth}
               className="text-gray-600 hover:text-gray-900"
             >
@@ -184,7 +238,7 @@ const CalendarPage = () => {
               </svg>
             </button>
           </div>
-          
+
           {/* Calendar Grid */}
           <div className="p-2 border border-gray-200 rounded-b-md">
             {/* Day headers */}
@@ -193,16 +247,17 @@ const CalendarPage = () => {
                 <div key={index} className="text-gray-500 text-sm py-1">{day}</div>
               ))}
             </div>
-            
+
             {/* Calendar days */}
             <div className="grid grid-cols-7 gap-1">
               {generateCalendarDays().map((day, index) => (
-                <div 
-                  key={index} 
+                <div
+                  key={index}
                   className={`
-                    text-center py-2 rounded-md cursor-pointer
+                    text-center py-2 rounded-md
                     ${!day ? 'invisible' : ''}
-                    ${isDateInRange(day as number) ? 'bg-blue-100' : 'hover:bg-gray-100'}
+                    ${!isDateAvailable(day as number) ? 'text-gray-300 cursor-not-allowed' : 'cursor-pointer'}
+                    ${isDateInRange(day as number) ? 'bg-blue-100' : isDateAvailable(day as number) ? 'hover:bg-gray-100' : ''}
                     ${isStartDate(day as number) ? 'bg-blue-500 text-white hover:bg-blue-600' : ''}
                     ${isEndDate(day as number) ? 'bg-blue-500 text-white hover:bg-blue-600' : ''}
                   `}

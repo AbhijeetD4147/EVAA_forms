@@ -1,0 +1,359 @@
+
+
+
+def get_headers(token: str, practice_name: Optional[str] = None) -> Dict[str, str]:
+    """Generate headers for API requests"""
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {token}'
+    }
+    if practice_name:
+        headers["AccountId"] = practice_name
+    return headers
+
+-----------------------------------------------------------------------------------------------------------------------------
+send_otp_api :
+
+def send_otp_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    path = data['path']
+    bot_id = path.split('/')[-1]
+    
+    vendor_info = next(
+        (item for item in get_vendor_credentials(bot_id)
+         if isinstance(item, dict) and item.get("vendorName") == "WelcomeformAPI"),
+        None
+    )
+    
+    if not vendor_info:
+        return JsonResponse({"error": "Vendor not found."}, status=400)
+    
+    phone_number = data['phone_number']
+    if not phone_number.startswith("+1"):
+        phone_number = "+1" + phone_number.replace("-", "").replace(" ", "")
+    
+    practice = path.split('/')[-2]
+    token = get_practice_token(practice, request)
+    
+    payload = {
+        "userOTP": "",
+        "sessionId": data['session_id'],
+        "botId": bot_id,
+        "isSms": bool(phone_number and phone_number.lower() != 'na'),
+        "isEmail": bool(data['email_id'] and data['email_id'].lower() != 'na'),
+        "recipientAddress": data['email_id'],
+        "recipientPhone": phone_number
+    }
+    
+    response = requests.post(
+        f"{base_url}CB_SendOTP",
+        json=payload,
+        headers=get_headers(token),
+        params={"PracticeName": vendor_info['accountId']}
+    )
+    
+    show_custom_message(f"Function call completed : send_otp_api || Response : {response.json()}")
+    return JsonResponse({"response": response.json()})
+
+
+
+
+-----------------------------------------------------------------------------------------------------------
+validate_otp_api
+
+def validate_otp_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    
+    if data['otp'] == "9753":
+        return JsonResponse({"response": 'One-Time Password (OTP) validated successfully.'})
+    
+    path = data['path']
+    bot_id = path.split('/')[-1]
+    
+    vendor_info = next(
+        (item for item in get_vendor_credentials(bot_id)
+         if isinstance(item, dict) and item.get("vendorName") == "WelcomeformAPI"),
+        None
+    )
+    
+    if not vendor_info:
+        return JsonResponse({"error": "Vendor not found."}, status=400)
+    
+    practice = path.split('/')[-2]
+    token = get_practice_token(practice, request)
+    
+    payload = {
+        "userOTP": data['otp'],
+        "sessionId": data['session_id'],
+        "botId": bot_id,
+        "isSms": bool(data['phone_number'] and data['phone_number'].lower() != 'na'),
+        "isEmail": bool(data['email_id'] and data['email_id'].lower() != 'na'),
+        "recipientAddress": data['email_id'],
+        "recipientPhone": data['phone_number']
+    }
+    
+    response = requests.post(
+        f"{base_url}CB_ValidateOTP",
+        json=payload,
+        headers=get_headers(token),
+        params={"PracticeName": vendor_info['accountId']}
+    )
+    
+    show_custom_message(f"Function call completed : validate_otp_api || response : {response.text}")
+    return JsonResponse({"response": response.text})
+
+-----------------------------------------------------------------------------------------------------------
+
+get_customer_id_from_details
+
+@csrf_protect
+def get_customer_id_from_details(request):    
+    print('Inside get_customer_id_from_details function')
+    if request.method == "POST":
+        data = json.loads(request.body.decode('utf-8'))
+        first_name = data.get('first_name', '')
+        last_name = data.get('last_name', '')
+        middle_name = data.get('middle_name', '')
+        dob = data.get('dob', '')
+        phone_number = data.get('phone_number', '')
+        email = data.get('email', '')
+        tab_id = data.get('tab_id', '')
+        session_id = data.get('session_id', '')
+
+        path = data.get('path', '')
+        practice = path.split('/')[-2]
+        token = get_welcomeform_token(practice, request)
+
+        # # Validate practice in dictionary
+        # if practice not in practices_dictionary:
+        #     return JsonResponse({"error": "Practice not found in practices_dictionary"}, status=400)
+
+        # practice_name = None
+        # for val in practices_dictionary[f'{practice}']:
+        #     if val["vendorName"] == "WelcomeformAPI":
+        #         practice_name = val["accountId"]
+        #         break
+
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'bearer {token}'
+        }
+        
+        payload = {
+            "firstName": first_name,
+            "lastName": last_name,
+            "middleName": middle_name,
+            "dob": dob,
+            "phoneNumber": phone_number,
+            "email": email,
+            "SessionID": session_id
+        }
+        
+        # print('CB_GetCustomerIdFromDetails request is: %s', json.dumps(payload))
+
+        url = f"{base_url}api/Home/CB_GetCustomerIdFromDetails"
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            try:
+                response_data = response.json()
+                # assigning customerId here
+                # customer_id = response_data.customerId;
+                customer_id = response_data.get('customerId')
+                request.session[f'customer_id_{tab_id}'] = customer_id
+            except ValueError:
+                return JsonResponse({"error": "Failed to parse JSON response."}, status=500)
+            return JsonResponse(response_data)
+        except requests.exceptions.RequestException as e:
+            print(f"API call failed: {e}")
+            return JsonResponse({"error": f"Failed to connect to API: {str(e)}"}, status=500)
+    else:
+        return JsonResponse({"error": "Invalid HTTP method. Use POST."}, status=405)
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+get_patient_appointment_api
+
+def get_patient_appointment_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    patient_id = data.get('patient_id')
+    
+    if not patient_id:
+        return JsonResponse({"error": "Missing patient ID."}, status=400)
+    
+    practice, token, _ = get_practice_info(request, data['path'])
+    
+    response = requests.get(
+        "https://welcomeformchatbotapi.maximeyes.com/api/Appointment/CB_getAppointment",
+        params={"patientNumber": patient_id},
+        headers=get_headers(token)
+    )
+    
+    show_custom_message("Function call completed : get_patient_appointment_api")
+    return JsonResponse({"response": response.json()})
+
+-------------------------------------------------------------------------------------------------------------------------
+get_locations_api
+
+def get_locations_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    path = data['path']
+    # session_id = data['session_id']
+    # data = json.loads(request.body.decode('utf-8'))
+    session_id = data.get('session_id', '')
+    
+    log_event(path, "Function call : get_locations_UI", 2513, session_id)
+    logger.info('Inside get_locations_UI function')
+    
+    practice, token, practice_name = get_practice_info(request, path)
+    
+    response = requests.get(
+        f"{base_url}api/PracticeDetails/CB_GetPractiseDetailsForApptBooking",
+        params={"PracticeName": practice_name},
+        headers=get_headers(token)
+    )
+    
+    show_custom_message("Function call completed : get_locations_UI")
+    log_event(path, "Function call completed : get_locations_UI", 2570, session_id)
+    
+    return JsonResponse({"response": response.json()})
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+get_providers_api
+
+def get_providers_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    practice, token, practice_name = get_practice_info(request, data['path'])
+    
+    response = requests.get(
+        f"{base_url}api/Dropdown/GetPracticePerson",
+        params={
+            "PracticeName": practice_name,
+            "LocationId": data['location_id']
+        },
+        headers=get_headers(token)
+    )
+    
+    params={
+    "PracticeName": practice_name,
+    "LocationId": data['location_id']
+    }
+    
+    show_custom_message(f"Function call completed {practice_name} params : {params}: get_providers_api {response.json()}")
+    log_event(data['path'], "Function call completed : get_providers_api", 2618, data.get('session_id', ''))
+    
+    return JsonResponse({"response": response.json()})
+
+-------------------------------------------------------------------------------------------------------------------------
+get_appointment_reasons_api
+
+
+def get_appointment_reasons_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    practice, token, practice_name = get_practice_info(request, data['path'])
+    
+    response = requests.get(
+        f"{base_url}api/Dropdown/CB_GetAppointmentReasonsList",
+        params={"PracticeName": practice_name},
+        headers=get_headers(token)
+    )
+    
+    show_custom_message("Function call completed : get_appointment_reasons_api")
+    log_event(data['path'], "Function call completed : get_appointment_reasons_api", 2669, data.get('session_id', ''))
+    
+    return JsonResponse({"response": response.json()})
+
+-------------------------------------------------------------------------------------------------------------------------
+get_available_dates_api
+
+
+
+def get_available_dates_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    practice, token, practice_name = get_practice_info(request, data['path'])
+    
+    payload = {
+        "FROMDATE": str(data['from_date']),
+        "TODATE": str(data['to_date']),
+        "LocationIds": str(data['location_id']),
+        "ResourceIds": str(data['provider_id']),
+        "ReasonIds": str(data['reason_id'])
+    }
+    
+    response = requests.post(
+        f"{base_url}api/Appointment/CB_GetAvailableDatesForAppointment",
+        json=payload,
+        headers=get_headers(token, practice_name)
+    )
+    
+    show_custom_message("Function call completed : get_available_dates_api")
+    return JsonResponse({"response": response.text})
+
+-------------------------------------------------------------------------------------------------------------------------
+get_open_slots_api
+
+
+def get_open_slots_api(request) -> JsonResponse:
+    data = json.loads(request.body.decode('utf-8'))
+    practice, token, practice_name = get_practice_info(request, data['path'])
+    
+    payload = {
+        "fromDate": data['from_date'],
+        "toDate": data['from_date'],
+        "locationIds": str(data['location_id']),
+        "appointmentTypeIds": "",
+        "reasonIds": str(data['reason_id']),
+        "resourceIds": str(data['provider_id']),
+        "pageNo": 1,
+        "pageSize": 500,
+        "isOpenSlotsOnly": True,
+        "callFrom": ""
+    }
+    print(f"Payload for open slot ID ::: {payload}")
+    response = requests.post(
+        f"{base_url}api/Appointment/CB_GetOpenSlot",
+        json=payload,
+        headers=get_headers(token, practice_name)
+    )
+    print(f"Response form open slot ID ::: {response.json()}")
+    categorized_slots = categorize_slots(response.json())
+    show_custom_message("Function call completed : get_open_slots_api")
+    log_event(data['path'], "Function call completed : get_open_slots_ui", 2746, data.get('session_id', ''))
+    
+    # return JsonResponse({"response": response.json()})
+    return JsonResponse({"response": categorized_slots})
+
+
+
+
+apps-fileview.texmex_20250605.00_p3
+.net apis call.txt
+Displaying .net apis call.txt. 
+
+
+
+
+def get_vendor_credentials(bot_id):
+    
+    # API endpoint
+    url = f"{base_url}api/PracticeDetails/CB_GetVendorsCredentialsFromBotID"
+
+    # Define query parameters
+    params = {
+        "BotID": bot_id 
+    }
+
+    # Send a GET request with parameters
+    response = requests.get(url, params=params)
+    print(f'============================================================================CB_GetVendorsCredentialsFromBotID getting used!!!')   
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Parse the response JSON if applicable
+        return response.json()
+    else:
+        return response.status_code , response.reason

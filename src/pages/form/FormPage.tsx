@@ -1,5 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { sendOtp } from '../../services/api/otpService'
+
+// Fixed session ID to use for all API calls
+const SESSION_ID = '65c03d61-461e-4ad7-bc73-9e5ec43ccc28';
 
 const FormPage = () => {
   const navigate = useNavigate()
@@ -10,6 +14,8 @@ const FormPage = () => {
     phoneNumber: '',
     email: ''
   })
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -19,11 +25,40 @@ const FormPage = () => {
     }))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Add these constants at the top of your file, or import them from App.tsx
+  const BOT_ID = 'QApixW';
+  const DEFAULT_PRACTICE = 'burneteyecarepinecone';
+  
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log('Form submitted:', formData)
-    // Add your form submission logic here
-     navigate('/otp', { state: { formData } })
+
+    setIsLoading(true)
+    setError('')
+    localStorage.setItem('appointmentFormData', JSON.stringify(formData));
+    try {
+      // Call the sendOtp API with the fixed session ID and correct path
+      const response = await sendOtp({
+        path: `/${DEFAULT_PRACTICE}/${BOT_ID}`, // Use actual practice and bot ID
+        phone_number: formData.phoneNumber,
+        email_id: formData.email,
+        session_id: SESSION_ID
+      })
+      
+      console.log('OTP sent successfully:', response)
+      
+      // Navigate to OTP page with form data and session ID
+      navigate('/otp', { 
+        state: { 
+          formData,
+          sessionId: SESSION_ID 
+        } 
+      })
+    } catch (error) {
+      console.error('Error sending OTP:', error)
+      setError('Failed to send verification code. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (

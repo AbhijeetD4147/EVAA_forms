@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { bookAppointment } from '../../services/api/appointmentService';
 
 const TimeSlotPage = () => {
   const navigate = useNavigate()
@@ -81,15 +82,56 @@ const TimeSlotPage = () => {
   const handleTimeSlotClick = (timeSlot: string) => {
     setSelectedTimeSlot(timeSlot)
   }
+  const handleFinishBooking = async () => {
+    if (!selectedDate || !selectedTimeSlot) return;
+    const formData = JSON.parse(localStorage.getItem('appointmentFormData') || '{}');
+  const appointmentData = JSON.parse(localStorage.getItem('appointmentSelections') || '{}');
+  const dateData = JSON.parse(localStorage.getItem('appointmentDate') || '{}');
+  
+    // Example: extract fields for the API payload
+   const payload = {
+    ApptDate: selectedDate,
+    EmailId: formData.email || '',
+    FirstName: formData.firstName || '',
+    LastName: formData.lastName || '',
+    MobileNumber: formData.phoneNumber || '',
+    OpenSlotId: selectedTimeSlot,
+    PatientDob: formData.dob || '',
+    ReasonId: appointmentData.reason || '',
+    SessionID: formData.sessionId || '',
+    isNewPatient: formData.isNewPatient || false,
+    locationId: appointmentData.location || '',
+    resourceId: appointmentData.provider || ''
+  };
 
-  const handleFinishBooking = () => {
-    console.log('Booking completed:', {
-      date: selectedDate,
-      timeSlot: selectedTimeSlot
-    })
-    // Navigate to confirmation page or back to home
-    navigate('/')
-  }
+  
+    const result = await bookAppointment({
+      open_slot_id: selectedTimeSlot,
+      from_date: selectedDate,
+      reason_id: appointmentData.reason || '',
+      first_name: formData.firstName || '',
+      last_name: formData.lastName || '',
+      email_id: formData.email || '',
+      phone_number: formData.mobileNumber || '',
+      dob: formData.dob || '',
+      session_id: formData.sessionId || '',
+      isNewPatient: formData.isNewPatient || false,
+      selected_location_name: appointmentData.location || '',
+      selected_provider_pame: appointmentData.provider || '',
+      resourceId: '',
+      location_selected: '',
+      path: ''
+    });
+   
+    // Handle result (success/failure)
+    if (result && result.response === 'Appointment scheduled successfully.') {
+      // Navigate to confirmation or show success
+      navigate('/');
+    } else {
+      // Show error message
+      alert(result.usermessage || 'Booking failed.');
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
